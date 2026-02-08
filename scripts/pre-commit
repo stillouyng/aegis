@@ -1,0 +1,12 @@
+#!/bin/sh
+# Git pre-commit hook: run fmt, clippy, test.
+# Install: cp scripts/pre-commit .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
+# On Windows with Git for Windows this runs in Git Bash.
+
+set -e
+echo "Running cargo fmt --check..."
+cargo fmt --all -- --check
+echo "Running cargo clippy..."
+cargo clippy --all-targets -- -D warnings
+echo "Running cargo test..."
+cargo test
