@@ -2,8 +2,8 @@
 # Creates .git/hooks/pre-commit that runs the Rust checks.
 
 $root = git rev-parse --show-toplevel
-$hookDir = Join-Path $root ".git", "hooks"
-$scriptPath = (Join-Path $root "scripts" "pre-commit.ps1") -replace '\\', '/'
+$hookDir = Join-Path (Join-Path $root ".git") "hooks"
+$scriptPath = (Join-Path (Join-Path $root "scripts") "pre-commit.ps1") -replace '\\', '/'
 $preCommit = Join-Path $hookDir "pre-commit"
 
 $content = @"
