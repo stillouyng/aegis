@@ -1,10 +1,10 @@
-use tokio::net::TcpListener;
 use tokio::io::AsyncReadExt;
+use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-use super::structs::RequestMeta;
 use super::enums::ContentType;
 use super::events::Event;
+use super::structs::RequestMeta;
 
 type Headers = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -41,16 +41,16 @@ fn headers_to_meta(headers: &Headers) -> RequestMeta {
             meta.content_length = parse_content_length(value);
         } else if name.eq_ignore_ascii_case(b"content-type") {
             meta.content_type = Some(ContentType::from_header_value(value));
-        } else if name.eq_ignore_ascii_case(b"transfer-encoding") {
-            if value.windows(7).any(|w| w.eq_ignore_ascii_case(b"chunked")) {
-                meta.is_chunked = true;
-            }
+        } else if name.eq_ignore_ascii_case(b"transfer-encoding")
+            && value.windows(7).any(|w| w.eq_ignore_ascii_case(b"chunked"))
+        {
+            meta.is_chunked = true;
         }
     }
     meta
 }
 
-pub async fn run_listener(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Result<()> {
+pub async fn run_server(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     println!("Listening on {}", addr);
 
@@ -77,7 +77,9 @@ pub async fn run_listener(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Res
                     Ok(n) => {
                         if !headers_done {
                             header_buffer.extend_from_slice(&buf[..n]);
-                            if let Some(pos) = header_buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                            if let Some(pos) =
+                                header_buffer.windows(4).position(|w| w == b"\r\n\r\n")
+                            {
                                 let raw_headers = header_buffer[..pos].to_vec();
                                 let rest = header_buffer[pos + 4..].to_vec();
                                 header_buffer.clear();
@@ -86,9 +88,16 @@ pub async fn run_listener(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Res
                                 headers_done = true;
                                 body_bytes_received = rest.len();
                                 expected_length = meta.content_length;
-                                let event = Event::RequestStart { raw_headers, rest, meta };
+                                let event = Event::RequestStart {
+                                    raw_headers,
+                                    rest,
+                                    meta,
+                                };
                                 if tx.send(event).await.is_err() {
-                                    println!("Receiver dropped, stopping listener for {}", client_addr);
+                                    println!(
+                                        "Receiver dropped, stopping listener for {}",
+                                        client_addr
+                                    );
                                     break;
                                 }
                             }

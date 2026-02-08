@@ -16,7 +16,9 @@ impl ContentType {
         };
         if s.starts_with("application/json") {
             ContentType::Json
-        } else if s.starts_with("application/x-www-form-urlencoded") || s.starts_with("multipart/form-data") {
+        } else if s.starts_with("application/x-www-form-urlencoded")
+            || s.starts_with("multipart/form-data")
+        {
             ContentType::FormData
         } else if s.starts_with("text/") {
             ContentType::Text
