@@ -1,5 +1,6 @@
 use super::structs::RequestMeta;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub enum Event {
     RequestStart {
@@ -11,5 +12,5 @@ pub enum Event {
         body: Vec<u8>,
         more_body: bool,
     },
-    Disconnect
+    Disconnect,
 }
