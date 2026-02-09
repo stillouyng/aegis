@@ -1,10 +1,10 @@
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpListener;
 use tokio::sync::mpsc;
 
-use super::enums::ContentType;
-use super::events::Event;
-use super::structs::RequestMeta;
+use crate::core::enums::ContentType;
+use crate::core::events::Event;
+use crate::core::structs::RequestMeta;
+
+use super::listener::Listener;
 
 type Headers = Vec<(Vec<u8>, Vec<u8>)>;
 
@@ -50,12 +50,14 @@ fn headers_to_meta(headers: &Headers) -> RequestMeta {
     meta
 }
 
-pub async fn run_server(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Result<()> {
-    let listener = TcpListener::bind(addr).await?;
-    println!("Listening on {}", addr);
-
+pub async fn run_server(
+    listener: Box<dyn Listener>, // Принимаем абстрактный листенер
+    tx: mpsc::Sender<Event>,
+) -> tokio::io::Result<()> {
     loop {
-        let (mut socket, client_addr) = listener.accept().await?;
+        // Вызываем accept через трейт
+        let (mut stream, client_addr) = listener.accept().await?;
+        let tx = tx.clone();
         println!("Accepted connection from {}", client_addr);
 
         let tx = tx.clone();
@@ -68,7 +70,7 @@ pub async fn run_server(addr: &str, tx: mpsc::Sender<Event>) -> tokio::io::Resul
             let mut header_buffer = Vec::new();
 
             loop {
-                match socket.read(&mut buf).await {
+                match stream.read(&mut buf).await {
                     Ok(0) => {
                         println!("Client {} disconnected", client_addr);
                         let _ = tx.send(Event::Disconnect).await;
