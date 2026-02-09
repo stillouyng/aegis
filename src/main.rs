@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // 1. Configurate
     init_logging();
     let config = Arc::new(ServerConfig::from_env());
-    let span = tracing::info_span!("connection", client = %config.addr);
+    let span = tracing::info_span!("connection", server = %config.addr);
     let _enter = span.enter();
 
     // 2. Event channel.

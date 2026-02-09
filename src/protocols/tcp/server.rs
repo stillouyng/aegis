@@ -61,6 +61,8 @@ pub async fn run_server(
         let (mut stream, client_addr) = listener.accept().await?;
         let tx = tx.clone();
         let config = Arc::clone(&config);
+        let connection_span = tracing::info_span!("http_conn", client = %client_addr);
+        let _enter = connection_span.enter();
 
         debug!("Accepted connection");
 
@@ -84,7 +86,11 @@ pub async fn run_server(
 
                             // If only header is bigger than MAX_PAYLOAD_SIZE.
                             if header_buffer.len() > config.max_payload_size {
-                                warn!(client = %client_addr, received = header_buffer.len(), limit = config.max_payload_size, "Header is too big.");
+                                warn!(
+                                    received = header_buffer.len(),
+                                    limit = config.max_payload_size,
+                                    "Header is too big."
+                                );
                                 break;
                             }
 
@@ -105,14 +111,14 @@ pub async fn run_server(
                                 // If Content-Length more than MAX_PAYLOAD_SIZE.
                                 if let Some(len) = expected_length {
                                     if len > config.max_payload_size {
-                                        warn!(client = %client_addr, len, limit=config.max_payload_size);
+                                        warn!(len, limit = config.max_payload_size);
                                         break;
                                     }
                                 }
 
                                 // If rest bytes more than MAX_PAYLOAD_SIZE.
                                 if body_bytes_received > config.max_payload_size {
-                                    warn!(client = %client_addr, recieved = body_bytes_received);
+                                    warn!(recieved = body_bytes_received);
                                     break;
                                 }
                                 let event = Event::RequestStart {
@@ -130,7 +136,11 @@ pub async fn run_server(
 
                             // If body_bytes_received more than MAX_PAYLOAD_SIZE.
                             if body_bytes_received > config.max_payload_size {
-                                warn!(client = %client_addr, received = body_bytes_received, limit = config.max_payload_size, "Payload limit exceeded during streaming!");
+                                warn!(
+                                    received = body_bytes_received,
+                                    limit = config.max_payload_size,
+                                    "Payload limit exceeded during streaming!"
+                                );
                                 break;
                             }
 
