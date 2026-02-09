@@ -1,9 +1,10 @@
+use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::core::enums::ContentType;
 use crate::core::events::Event;
-use crate::core::structs::RequestMeta;
+use crate::core::structs::{RequestMeta, ServerConfig};
 
 use super::listener::Listener;
 
@@ -54,17 +55,17 @@ fn headers_to_meta(headers: &Headers) -> RequestMeta {
 pub async fn run_server(
     listener: Box<dyn Listener>,
     tx: mpsc::Sender<Event>,
+    config: Arc<ServerConfig>,
 ) -> tokio::io::Result<()> {
     loop {
-        // Вызываем accept через трейт
         let (mut stream, client_addr) = listener.accept().await?;
         let tx = tx.clone();
+        let config = Arc::clone(&config);
+
         debug!("Accepted connection");
 
-        let tx = tx.clone();
-
         tokio::spawn(async move {
-            let mut buf = [0u8; 1024];
+            let mut buf = vec![0u8; config.read_buffer_size];
             let mut headers_done = false;
             let mut body_bytes_received = 0usize;
             let mut expected_length: Option<usize> = None;
@@ -80,17 +81,40 @@ pub async fn run_server(
                     Ok(n) => {
                         if !headers_done {
                             header_buffer.extend_from_slice(&buf[..n]);
+
+                            // If only header is bigger than MAX_PAYLOAD_SIZE.
+                            if header_buffer.len() > config.max_payload_size {
+                                warn!(client = %client_addr, received = header_buffer.len(), limit = config.max_payload_size, "Header is too big.");
+                                break;
+                            }
+
                             if let Some(pos) =
                                 header_buffer.windows(4).position(|w| w == b"\r\n\r\n")
                             {
                                 let raw_headers = header_buffer[..pos].to_vec();
                                 let rest = header_buffer[pos + 4..].to_vec();
                                 header_buffer.clear();
+
                                 let headers = parse_raw_headers(&raw_headers);
                                 let meta = headers_to_meta(&headers);
+
                                 headers_done = true;
                                 body_bytes_received = rest.len();
                                 expected_length = meta.content_length;
+
+                                // If Content-Length more than MAX_PAYLOAD_SIZE.
+                                if let Some(len) = expected_length {
+                                    if len > config.max_payload_size {
+                                        warn!(client = %client_addr, len, limit=config.max_payload_size);
+                                        break;
+                                    }
+                                }
+
+                                // If rest bytes more than MAX_PAYLOAD_SIZE.
+                                if body_bytes_received > config.max_payload_size {
+                                    warn!(client = %client_addr, recieved = body_bytes_received);
+                                    break;
+                                }
                                 let event = Event::RequestStart {
                                     raw_headers,
                                     rest,
@@ -103,9 +127,16 @@ pub async fn run_server(
                             }
                         } else {
                             body_bytes_received += n;
+
+                            // If body_bytes_received more than MAX_PAYLOAD_SIZE.
+                            if body_bytes_received > config.max_payload_size {
+                                warn!(client = %client_addr, received = body_bytes_received, limit = config.max_payload_size, "Payload limit exceeded during streaming!");
+                                break;
+                            }
+
                             let more_body = expected_length
                                 .map(|len| body_bytes_received < len)
-                                .unwrap_or(true);
+                                .unwrap_or(false);
                             let body = buf[..n].to_vec();
                             let event = Event::RequestBody { body, more_body };
                             if tx.send(event).await.is_err() {

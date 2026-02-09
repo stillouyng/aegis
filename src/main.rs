@@ -1,5 +1,5 @@
 use dotenvy::dotenv;
-use std::net::SocketAddr;
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{error, info};
 use tracing_subscriber::{fmt, prelude::*, registry, EnvFilter};
@@ -8,6 +8,7 @@ pub mod core;
 pub mod protocols;
 
 use crate::core::events::Event;
+use crate::core::structs::ServerConfig;
 use crate::protocols::tcp::listener::TcpByteListener;
 use crate::protocols::tcp::server;
 
@@ -21,26 +22,25 @@ fn init_logging() {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // 0. Set up the address
-    let addr: SocketAddr = "127.0.0.1:8080".parse()?;
-
-    // 1. Logging initialization
+    // 1. Configurate
     init_logging();
-    let span = tracing::info_span!("connection", client = %addr);
+    let config = Arc::new(ServerConfig::from_env());
+    let span = tracing::info_span!("connection", client = %config.addr);
     let _enter = span.enter();
 
     // 2. Event channel.
     let (tx, mut rx) = mpsc::channel(100);
 
     // 3. Transport initialization
-    let tcp_listener = TcpByteListener::bind(addr).await?;
+    let tcp_listener = TcpByteListener::bind(config.addr).await?;
     let listener = Box::new(tcp_listener);
+    let server_config = Arc::clone(&config);
 
     info!("Server starting");
 
     // 4. Start the server
     tokio::spawn(async move {
-        if let Err(e) = server::run_server(listener, tx).await {
+        if let Err(e) = server::run_server(listener, tx, server_config).await {
             error!("Server Error: {}", e);
         }
     });
