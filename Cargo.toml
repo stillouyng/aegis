@@ -5,4 +5,8 @@ edition = "2021"
 
 [dependencies]
 async-trait = "0.1.89"
+dotenvy = "0.15.7"
+httparse = "1.10.1"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "sync", "net", "io-util"] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.22", features=["env-filter"] }

@@ -1,4 +1,5 @@
 use tokio::sync::mpsc;
+use tracing::{debug, error};
 
 use crate::core::enums::ContentType;
 use crate::core::events::Event;
@@ -51,14 +52,14 @@ fn headers_to_meta(headers: &Headers) -> RequestMeta {
 }
 
 pub async fn run_server(
-    listener: Box<dyn Listener>, // Принимаем абстрактный листенер
+    listener: Box<dyn Listener>,
     tx: mpsc::Sender<Event>,
 ) -> tokio::io::Result<()> {
     loop {
         // Вызываем accept через трейт
         let (mut stream, client_addr) = listener.accept().await?;
         let tx = tx.clone();
-        println!("Accepted connection from {}", client_addr);
+        debug!("Accepted connection");
 
         let tx = tx.clone();
 
@@ -72,8 +73,8 @@ pub async fn run_server(
             loop {
                 match stream.read(&mut buf).await {
                     Ok(0) => {
-                        println!("Client {} disconnected", client_addr);
-                        let _ = tx.send(Event::Disconnect).await;
+                        debug!("Client disconnected");
+                        let _ = tx.send(Event::Disconnect { client_addr }).await;
                         break;
                     }
                     Ok(n) => {
@@ -96,10 +97,7 @@ pub async fn run_server(
                                     meta,
                                 };
                                 if tx.send(event).await.is_err() {
-                                    println!(
-                                        "Receiver dropped, stopping listener for {}",
-                                        client_addr
-                                    );
+                                    debug!("Receiver dropped, stopping listener");
                                     break;
                                 }
                             }
@@ -111,13 +109,13 @@ pub async fn run_server(
                             let body = buf[..n].to_vec();
                             let event = Event::RequestBody { body, more_body };
                             if tx.send(event).await.is_err() {
-                                println!("Receiver dropped, stopping listener for {}", client_addr);
+                                debug!("Receiver dropped, stopping listener");
                                 break;
                             }
                         }
                     }
                     Err(e) => {
-                        println!("Error reading from client {}: {}", client_addr, e);
+                        error!("Error reading: {}", e);
                         break;
                     }
                 }

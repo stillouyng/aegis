@@ -1,4 +1,5 @@
 use super::structs::RequestMeta;
+use std::net::SocketAddr;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -12,5 +13,7 @@ pub enum Event {
         body: Vec<u8>,
         more_body: bool,
     },
-    Disconnect,
+    Disconnect {
+        client_addr: SocketAddr,
+    },
 }
