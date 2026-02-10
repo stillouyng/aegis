@@ -1,11 +1,14 @@
-use super::structs::RequestMeta;
 use std::net::SocketAddr;
+
+use super::structs::RequestMeta;
 
 #[allow(dead_code)]
 #[derive(Debug)]
 pub enum Event {
     RequestStart {
-        raw_headers: Vec<u8>,
+        method: String,
+        path: String,
+        version: u8,
         rest: Vec<u8>,
         meta: RequestMeta,
     },

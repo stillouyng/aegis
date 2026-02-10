@@ -1,56 +1,12 @@
+use httparse::{Header, Request, Status};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{debug, error, warn};
 
-use crate::core::enums::ContentType;
 use crate::core::events::Event;
 use crate::core::structs::{RequestMeta, ServerConfig};
 
 use super::listener::Listener;
-
-type Headers = Vec<(Vec<u8>, Vec<u8>)>;
-
-fn parse_raw_headers(raw: &[u8]) -> Headers {
-    let mut headers = Vec::new();
-    for line in raw.split(|&b| b == b'\n') {
-        let line = line.strip_suffix(b"\r").unwrap_or(line);
-        if let Some(colon) = line.iter().position(|&b| b == b':') {
-            let name = line[..colon].to_vec();
-            let value = line[colon + 1..].to_vec();
-            headers.push((name, value));
-        }
-    }
-    headers
-}
-
-fn parse_content_length(value: &[u8]) -> Option<usize> {
-    value
-        .iter()
-        .filter(|&&b| b != b' ')
-        .try_fold(0usize, |acc, &b| {
-            if b.is_ascii_digit() {
-                Some(acc * 10 + (b - b'0') as usize)
-            } else {
-                None
-            }
-        })
-}
-
-fn headers_to_meta(headers: &Headers) -> RequestMeta {
-    let mut meta = RequestMeta::new();
-    for (name, value) in headers {
-        if name.eq_ignore_ascii_case(b"content-length") {
-            meta.content_length = parse_content_length(value);
-        } else if name.eq_ignore_ascii_case(b"content-type") {
-            meta.content_type = Some(ContentType::from_header_value(value));
-        } else if name.eq_ignore_ascii_case(b"transfer-encoding")
-            && value.windows(7).any(|w| w.eq_ignore_ascii_case(b"chunked"))
-        {
-            meta.is_chunked = true;
-        }
-    }
-    meta
-}
 
 pub async fn run_server(
     listener: Box<dyn Listener>,
@@ -67,97 +23,134 @@ pub async fn run_server(
         debug!("Accepted connection");
 
         tokio::spawn(async move {
-            let mut buf = vec![0u8; config.read_buffer_size];
+            let mut header_buffer = Vec::new();
             let mut headers_done = false;
             let mut body_bytes_received = 0usize;
             let mut expected_length: Option<usize> = None;
-            let mut header_buffer = Vec::new();
+            let mut temp_buf = vec![0u8; config.read_buffer_size];
 
             loop {
-                match stream.read(&mut buf).await {
+                // 1. Reading the tcp-socket.
+                let n = match stream.read(&mut temp_buf).await {
                     Ok(0) => {
-                        debug!("Client disconnected");
+                        // Client disconnected
+                        debug!("Client Disconnected");
                         let _ = tx.send(Event::Disconnect { client_addr }).await;
                         break;
                     }
-                    Ok(n) => {
-                        if !headers_done {
-                            header_buffer.extend_from_slice(&buf[..n]);
+                    Ok(n) => n,
+                    Err(e) => {
+                        // Error while reading.
+                        error!("Error while listening: {:?}", e);
+                        let _ = tx.send(Event::Disconnect { client_addr }).await;
+                        break;
+                    }
+                };
 
-                            // If only header is bigger than MAX_PAYLOAD_SIZE.
-                            if header_buffer.len() > config.max_payload_size {
-                                warn!(
-                                    received = header_buffer.len(),
-                                    limit = config.max_payload_size,
-                                    "Header is too big."
-                                );
+                if !headers_done {
+                    // 2. Reading headers.
+                    header_buffer.extend_from_slice(&temp_buf[..n]);
+
+                    // CONDITION
+                    // If header_buffer is bigger than MAX_PAYLOAD_SIZE.
+                    if header_buffer.len() > config.max_payload_size {
+                        warn!(
+                            received = header_buffer.len(),
+                            limit = config.max_payload_size,
+                            "Header is too big."
+                        );
+                        break;
+                    }
+
+                    let mut headers = [Header {
+                        name: "",
+                        value: &[],
+                    }; 64];
+                    let mut req = Request::new(&mut headers);
+
+                    match req.parse(&header_buffer) {
+                        Ok(Status::Complete(amt)) => {
+                            headers_done = true;
+
+                            let method = match req.method {
+                                Some(m) => m.to_string(),
+                                None => {
+                                    // Raise a 400.
+                                    warn!("Empty method");
+                                    break;
+                                }
+                            };
+                            let path = match req.path {
+                                Some(p) => p.to_string(),
+                                None => {
+                                    // Raise a 400.
+                                    warn!("Empty path");
+                                    break;
+                                }
+                            };
+                            let version = req.version.unwrap_or(1);
+
+                            let meta = RequestMeta::from_headers(req.headers);
+                            expected_length = meta.content_length;
+
+                            // CONDITION
+                            // IF Content-Length is more than MAX_PAYLOAD_SIZE.
+                            if let Some(len) = expected_length {
+                                if len > config.max_payload_size {
+                                    warn!(len, limit = config.max_payload_size);
+                                    break;
+                                }
+                            }
+
+                            let rest = header_buffer[amt..].to_vec();
+                            body_bytes_received = rest.len();
+
+                            // CONDITION
+                            // If rest bytes len is bigger than MAX_PAYLOAD_SIZE.
+                            if body_bytes_received > config.max_payload_size {
+                                warn!(recieved = body_bytes_received);
                                 break;
                             }
 
-                            if let Some(pos) =
-                                header_buffer.windows(4).position(|w| w == b"\r\n\r\n")
-                            {
-                                let raw_headers = header_buffer[..pos].to_vec();
-                                let rest = header_buffer[pos + 4..].to_vec();
-                                header_buffer.clear();
-
-                                let headers = parse_raw_headers(&raw_headers);
-                                let meta = headers_to_meta(&headers);
-
-                                headers_done = true;
-                                body_bytes_received = rest.len();
-                                expected_length = meta.content_length;
-
-                                // If Content-Length more than MAX_PAYLOAD_SIZE.
-                                if let Some(len) = expected_length {
-                                    if len > config.max_payload_size {
-                                        warn!(len, limit = config.max_payload_size);
-                                        break;
-                                    }
-                                }
-
-                                // If rest bytes more than MAX_PAYLOAD_SIZE.
-                                if body_bytes_received > config.max_payload_size {
-                                    warn!(recieved = body_bytes_received);
-                                    break;
-                                }
-                                let event = Event::RequestStart {
-                                    raw_headers,
+                            let _ = tx
+                                .send(Event::RequestStart {
+                                    method,
+                                    path,
+                                    version,
                                     rest,
                                     meta,
-                                };
-                                if tx.send(event).await.is_err() {
-                                    debug!("Receiver dropped, stopping listener");
-                                    break;
-                                }
-                            }
-                        } else {
-                            body_bytes_received += n;
+                                })
+                                .await;
 
-                            // If body_bytes_received more than MAX_PAYLOAD_SIZE.
-                            if body_bytes_received > config.max_payload_size {
-                                warn!(
-                                    received = body_bytes_received,
-                                    limit = config.max_payload_size,
-                                    "Payload limit exceeded during streaming!"
-                                );
-                                break;
-                            }
-
-                            let more_body = expected_length
-                                .map(|len| body_bytes_received < len)
-                                .unwrap_or(false);
-                            let body = buf[..n].to_vec();
-                            let event = Event::RequestBody { body, more_body };
-                            if tx.send(event).await.is_err() {
-                                debug!("Receiver dropped, stopping listener");
-                                break;
-                            }
+                            // Request could be stopped
                         }
+                        Ok(Status::Partial) => continue,
+                        Err(_) => break,
                     }
-                    Err(e) => {
-                        error!("Error reading: {}", e);
+                } else {
+                    // 3. Reading the body.
+                    body_bytes_received += n;
+
+                    // CONDITION
+                    // If received bytes len is more than MAX_PAYLOAD_SIZE.
+                    if body_bytes_received > config.max_payload_size {
+                        warn!(recieved = body_bytes_received);
                         break;
+                    }
+
+                    let more_body = expected_length
+                        .map(|len| body_bytes_received < len)
+                        .unwrap_or(false);
+
+                    let event = Event::RequestBody {
+                        body: temp_buf[..n].to_vec(),
+                        more_body,
+                    };
+                    let _ = tx.send(event).await;
+
+                    if !more_body {
+                        let _ = tx.send(Event::Disconnect { client_addr }).await;
+                        // Request could be stopped
                     }
                 }
             }
