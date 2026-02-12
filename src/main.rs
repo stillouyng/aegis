@@ -8,6 +8,7 @@ pub mod core;
 pub mod protocols;
 
 use crate::core::events::Event;
+use crate::core::response::Response;
 use crate::core::structs::ServerConfig;
 use crate::protocols::tcp::listener::TcpByteListener;
 use crate::protocols::tcp::server;
@@ -49,11 +50,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Event loop started");
     while let Some(event) = rx.recv().await {
         match event {
-            Event::RequestStart { meta, .. } => {
+            Event::RequestStart { meta, resp_tx, .. } => {
                 info!(
                     "New Request: {:?} (Content-Length: {:?})",
                     meta.content_type, meta.content_length
                 );
+                let response = Response::ok()
+                    .header("Content-Type", "application/json")
+                    .body(b"{\"status\": \"Aegis is running\"}".to_vec());
+
+                if resp_tx.send(response).is_err() {
+                    error!("Receiver already dropped - request cancelled");
+                }
             }
             Event::RequestBody { more_body, .. } => {
                 if !more_body {

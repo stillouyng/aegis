@@ -8,6 +8,20 @@ pub enum ContentType {
     Unknown,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HttpStatus {
+    Ok = 200,
+    Created = 201,
+    Accepted = 202,
+    NoContent = 204,
+    BadRequest = 400,
+    Forbidden = 403,
+    NotFound = 404,
+    PayloadTooLarge = 413,
+    InternalServerError = 500,
+    NotImplemented = 501,
+}
+
 impl ContentType {
     pub fn from_header_value(value: &[u8]) -> Self {
         let s = match std::str::from_utf8(value) {
@@ -30,8 +44,40 @@ impl ContentType {
     }
 }
 
+impl HttpStatus {
+    pub fn code(&self) -> u16 {
+        *self as u16
+    }
+
+    pub fn as_bytes(&self) -> &'static [u8] {
+        match self {
+            Self::Ok => b"200",
+            Self::Created => b"201",
+            Self::BadRequest => b"400",
+            Self::NotFound => b"404",
+            Self::PayloadTooLarge => b"413",
+            _ => b"500",
+        }
+    }
+
+    pub fn text(&self) -> &'static str {
+        match self {
+            Self::Ok => "OK",
+            Self::Created => "Created",
+            Self::Accepted => "Accepted",
+            Self::NoContent => "No Content",
+            Self::BadRequest => "Bad Request",
+            Self::Forbidden => "Forbidden",
+            Self::NotFound => "Not Found",
+            Self::PayloadTooLarge => "Payload Too Large",
+            Self::InternalServerError => "Internal Server Error",
+            Self::NotImplemented => "Not Implemented",
+        }
+    }
+}
+
 #[cfg(test)]
-mod tests {
+mod tests_contenttype {
     use super::*;
 
     #[test]

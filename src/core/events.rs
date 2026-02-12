@@ -1,6 +1,6 @@
-use std::net::SocketAddr;
-
 use super::structs::RequestMeta;
+use crate::core::response::Response;
+use std::net::SocketAddr;
 
 #[allow(dead_code)]
 #[derive(Debug)]
@@ -11,6 +11,7 @@ pub enum Event {
         version: u8,
         rest: Vec<u8>,
         meta: RequestMeta,
+        resp_tx: tokio::sync::oneshot::Sender<Response>,
     },
     RequestBody {
         body: Vec<u8>,

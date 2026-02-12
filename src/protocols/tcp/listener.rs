@@ -10,7 +10,7 @@ pub struct TcpByteListener {
 
 #[async_trait]
 pub trait Listener: Send + Sync {
-    async fn accept(&self) -> Result<(Box<dyn ByteStream + Send + Unpin>, SocketAddr)>;
+    async fn accept(&self) -> Result<(Box<dyn ByteStream>, SocketAddr)>;
 }
 
 impl TcpByteListener {
@@ -22,10 +22,10 @@ impl TcpByteListener {
 
 #[async_trait]
 impl Listener for TcpByteListener {
-    async fn accept(&self) -> Result<(Box<dyn ByteStream + Send + Unpin>, SocketAddr)> {
+    async fn accept(&self) -> Result<(Box<dyn ByteStream>, SocketAddr)> {
         let (stream, addr) = self.inner.accept().await?;
 
-        let byte_stream = Box::new(TcpByteStream::new(stream));
+        let byte_stream: Box<dyn ByteStream> = Box::new(TcpByteStream::new(stream));
 
         Ok((byte_stream, addr))
     }
